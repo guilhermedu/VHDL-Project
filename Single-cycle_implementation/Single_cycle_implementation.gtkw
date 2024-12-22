@@ -1,0 +1,25 @@
+[*]
+[*] GTKWave Analyzer v3.3.103 (w)1999-2019 BSI
+[*] Sat Dec 21 21:14:10 2024
+[*]
+[dumpfile] "/home/guilherme/Documentos/AAD/VHDL-Project/Single-cycle_implementation/accumulator.vcd"
+[dumpfile_mtime] "Sat Dec 21 21:08:44 2024"
+[dumpfile_size] 23814
+[savefile] "/home/guilherme/Documentos/AAD/VHDL-Project/Single-cycle_implementation/Single_cycle_implementation.gtkw"
+[timestart] 0
+[size] 1848 1043
+[pos] -39 -39
+*-22.000000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] accumulator_tb.
+[sst_width] 233
+[signals_width] 166
+[sst_expanded] 1
+[sst_vpaned_height] 298
+@24
+accumulator_tb.clock
+accumulator_tb.s_write_inc[7:0]
+accumulator_tb.s_write_addr[3:0]
+accumulator_tb.s_read_addr[3:0]
+accumulator_tb.s_read_data[7:0]
+[pattern_trace] 1
+[pattern_trace] 0
