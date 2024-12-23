@@ -31,7 +31,7 @@ begin
                  clock       => clock,
                  write_addr  => s_write_addr,
                  write_inc   => s_write_inc,
---                  write_shift => s_write_shift,
+                 write_shift => s_write_shift,
                  read_addr   => s_read_addr,
                  read_data   => s_read_data
                );
