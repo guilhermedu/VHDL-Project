@@ -4,9 +4,9 @@ use ieee.numeric_std.all;
 
 entity accumulator is
   generic (
-    ADDR_BITS : integer range 2 to 8 := 4;  -- Número de bits para endereços
-    DATA_BITS : integer range 4 to 32 := 8; -- Número de bits para dados
-    DATA_BITS_LOG2 : integer range 1 to 4 := 3 -- Log2(DATA_BITS)
+    ADDR_BITS : integer range 2 to 8 := 4;
+    DATA_BITS : integer range 4 to 32 := 8;
+    DATA_BITS_LOG2 : integer range 1 to 4 := 3
   );
   port (
     clock      : in  std_logic;
@@ -18,29 +18,47 @@ entity accumulator is
 end accumulator;
 
 architecture structural of accumulator is
-  -- Sinais intermediários para pipeline
-  signal s_write_addr_stage1 : std_logic_vector(ADDR_BITS-1 downto 0) := (others => '0'); -- Endereço no estágio 1
-  signal s_write_inc_stage1  : std_logic_vector(DATA_BITS-1 downto 0) := (others => '0'); -- Incremento no estágio 1
-  signal s_aux_read_data     : std_logic_vector(DATA_BITS-1 downto 0) := (others => '0'); -- Dado lido da RAM
-  signal s_value_to_write    : std_logic_vector(DATA_BITS-1 downto 0) := (others => '0'); -- Valor a ser escrito no estágio 2
 
-  -- Registradores intermediários para pipeline
-  signal reg_write_addr_stage2 : std_logic_vector(ADDR_BITS-1 downto 0) := (others => '0'); -- Endereço no estágio 2
-  signal reg_value_stage2      : std_logic_vector(DATA_BITS-1 downto 0) := (others => '0'); -- Valor estabilizado no estágio 2
+  --------------------------------------------------------------------------
+  -- SINAIS ORIGINAIS
+  --------------------------------------------------------------------------
+  -- Registradores que capturam os sinais de entrada
+  signal s_write_addr_stable : std_logic_vector(ADDR_BITS-1 downto 0);
+  signal s_write_inc_stable  : std_logic_vector(DATA_BITS-1 downto 0);
 
-  -- Controle de bypass
-  signal bypass_enable : std_logic := '0'; -- Ativado se o endereço do estágio 1 for igual ao do estágio 2
+  -- Valor que sai do somador (resultado da soma)
+  signal s_value_to_write    : std_logic_vector(DATA_BITS-1 downto 0);
+
+  -- Saída auxiliar de leitura da RAM
+  signal s_aux_read_data     : std_logic_vector(DATA_BITS-1 downto 0);
+
+  --------------------------------------------------------------------------
+  -- NOVOS SINAIS DE PIPELINE
+  --------------------------------------------------------------------------
+  -- Stage 1: registradores
+  signal s_stage1_read_data  : std_logic_vector(DATA_BITS-1 downto 0) := (others => '0');
+  signal s_stage1_write_addr : std_logic_vector(ADDR_BITS-1 downto 0) := (others => '0');
+  signal s_stage1_write_inc  : std_logic_vector(DATA_BITS-1 downto 0) := (others => '0');
+
+  -- Stage 2: registradores (resultado da soma e endereço)
+  signal s_stage2_result     : std_logic_vector(DATA_BITS-1 downto 0) := (others => '0');
+  signal s_stage2_write_addr : std_logic_vector(ADDR_BITS-1 downto 0) := (others => '0');
+
+  -- Detecção de “hazard”
+  signal hazard_detected     : std_logic := '0';
 
 begin
-  -- Estágio 1: Leitura e estabilização
+  ----------------------------------------------------------------------------
+  -- 1) REGISTRADORES ORIGINAIS PARA (write_addr, write_inc)
+  ----------------------------------------------------------------------------
   addr_reg : entity work.vector_register(behavioral)
     generic map (
       DATA_BITS => ADDR_BITS
     )
     port map (
       clock => clock,
-      d     => write_addr,
-      q     => s_write_addr_stage1,
+      d     => write_addr,           -- Endereço vindo de fora
+      q     => s_write_addr_stable,  -- Endereço estabilizado
       en    => '1'
     );
 
@@ -50,24 +68,61 @@ begin
     )
     port map (
       clock => clock,
-      d     => write_inc,
-      q     => s_write_inc_stage1,
+      d     => write_inc,            -- Incremento vindo de fora
+      q     => s_write_inc_stable,   -- Incremento estabilizado
       en    => '1'
     );
 
-  -- Verificar se o bypass é necessário
-  process(clock)
+  ----------------------------------------------------------------------------
+  -- 2) STAGE 1: LER DA RAM E GUARDAR NOS REGISTRADORES DE PIPELINE
+  ----------------------------------------------------------------------------
+  process (clock)
   begin
     if rising_edge(clock) then
-      if s_write_addr_stage1 = reg_write_addr_stage2 then
-        bypass_enable <= '1';
+      -- Lê da RAM via porta auxiliar e guarda no pipeline
+      s_stage1_read_data  <= s_aux_read_data;
+
+      -- Guarda os sinais write_addr e write_inc estabilizados
+      s_stage1_write_addr <= s_write_addr_stable;
+      s_stage1_write_inc  <= s_write_inc_stable;
+
+      -- Detecta hazard: se o endereço que estou lendo (Stage 1) for igual ao que acabei de escrever (Stage 2)
+      if (s_stage2_write_addr = s_write_addr_stable) then
+        hazard_detected <= '1';
       else
-        bypass_enable <= '0';
+        hazard_detected <= '0';
       end if;
     end if;
   end process;
 
-  -- RAM
+  ----------------------------------------------------------------------------
+  -- 3) STAGE 2: SOMAR E ESCREVER NA MEMÓRIA
+  ----------------------------------------------------------------------------
+  process (clock)
+  begin
+    if rising_edge(clock) then
+      -- Se houver hazard, usar o valor mais recente
+      if hazard_detected = '1' then
+        s_stage2_result <= std_logic_vector(
+                             unsigned(s_stage2_result) +
+                             unsigned(s_stage1_write_inc)
+                          );
+      else
+        -- Caso contrário, usar o valor lido do Stage 1
+        s_stage2_result <= std_logic_vector(
+                             unsigned(s_stage1_read_data) +
+                             unsigned(s_stage1_write_inc)
+                          );
+      end if;
+
+      -- Atualiza o endereço do Stage 2
+      s_stage2_write_addr <= s_stage1_write_addr;
+    end if;
+  end process;
+
+  ----------------------------------------------------------------------------
+  -- 4) MEMÓRIA (TRIPLE PORT RAM)
+  ----------------------------------------------------------------------------
   memory : entity work.triple_port_ram(behavioral)
     generic map (
       ADDR_BITS => ADDR_BITS,
@@ -75,48 +130,18 @@ begin
     )
     port map (
       clock          => clock,
-      write_addr     => reg_write_addr_stage2, -- Estágio 2
-      write_data     => reg_value_stage2,      -- Estágio 2
+
+      -- Porta de escrita
+      write_addr     => s_stage2_write_addr,
+      write_data     => s_stage2_result,
+
+      -- Porta de leitura principal
       read_addr      => read_addr,
       read_data      => read_data,
-      aux_read_addr  => s_write_addr_stage1,   -- Leitura auxiliar no estágio 1
-      aux_read_data  => s_aux_read_data        -- Valor lido diretamente da RAM
+
+      -- Porta auxiliar de leitura
+      aux_read_addr  => s_write_addr_stable,
+      aux_read_data  => s_aux_read_data
     );
-
-  -- Seleção do dado lido (RAM ou bypass)
-  process(clock)
-  begin
-    if rising_edge(clock) then
-      if bypass_enable = '1' then
-        -- Usa o valor mais recente do estágio 2
-        s_aux_read_data <= reg_value_stage2;
-      else
-        -- Usa o valor lido da RAM diretamente
-        s_aux_read_data <= s_aux_read_data; -- Valor correto vindo da RAM
-      end if;
-    end if;
-  end process;
-
-  -- Estágio 2: Soma e escrita
-  adder : entity work.adder_n(structural)
-    generic map (
-      N => DATA_BITS
-    )
-    port map (
-      a    => s_aux_read_data,       -- Valor lido da RAM ou bypass
-      b    => s_write_inc_stage1,    -- Incremento estabilizado no estágio 1
-      c_in => '0',                   -- Sem carry inicial
-      s    => s_value_to_write,      -- Resultado da soma
-      c_out => open                  -- Carry não utilizado
-    );
-
-  -- Estabilização dos valores no estágio 2
-  process(clock)
-  begin
-    if rising_edge(clock) then
-      reg_write_addr_stage2 <= s_write_addr_stage1; -- Estabiliza o endereço no estágio 2
-      reg_value_stage2 <= s_value_to_write;        -- Estabiliza o valor calculado
-    end if;
-  end process;
 
 end structural;
